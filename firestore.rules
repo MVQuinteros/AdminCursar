@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin';
+    }
+
+    // --- Contenido público + semilla (el seed corre ANTES del login) ---
+    match /instituciones/{id} {
+      allow read, write: if true;
+    }
+    match /ofertas/{id} {
+      allow read, write: if true;
+    }
+    match /avisos/{id} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if true;
+    }
+    match /tags/{id} {
+      allow read, write: if true;
+    }
+    match /testVocacional/{docId=**} {
+      allow read, write: if true;
+    }
+
+    // --- Datos personales: solo el dueño (+ admin web) ---
+    match /usuarios/{uid} {
+      allow read, write: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+    }
+    match /usuarios/{uid}/favoritos/{id} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /usuarios/{uid}/historial/{id} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /notificaciones/{id} {
+      allow create: if request.auth != null
+        && request.resource.data.userUid == request.auth.uid;
+      allow read, update, delete: if isAdmin() || (request.auth != null
+        && resource.data.userUid == request.auth.uid);
+    }
+    match /soporte/{id} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if isAdmin();
+    }
+    match /mensajes/{id} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
