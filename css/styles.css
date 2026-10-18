@@ -133,17 +133,13 @@ button { font-family: inherit; }
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.sidebar__brand-mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 800;
-  font-size: 17px;
-  display: grid;
-  place-items: center;
-}
+.sidebar__brand-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
 
 .sidebar__brand-name { font-weight: 700; font-size: 15px; letter-spacing: 0.02em; }
 .sidebar__brand-tag { font-size: 11px; color: var(--text-secondary); }

@@ -108,7 +108,7 @@ export function renderShell() {
     <div class="app">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar__brand">
-          <span class="sidebar__brand-mark">C</span>
+          <img src="assets/logoCursar.png" alt="Cursar" class="sidebar__brand-logo" />
           <span>
             <span class="sidebar__brand-name">CURSAR</span><br/>
             <span class="sidebar__brand-tag">Panel de administración</span>
