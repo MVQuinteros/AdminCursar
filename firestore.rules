@@ -7,7 +7,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin';
     }
 
+    function esDuenio(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
     // --- Contenido público + semilla (el seed corre ANTES del login) ---
+    //
+    // Siguen abiertos a escritura porque la semilla de la app escribe acá al
+    // arrancar, antes de que exista sesión. Endurecerlos (write: isAdmin())
+    // implica sacar la semilla de la app; queda pendiente.
     match /instituciones/{id} {
       allow read, write: if true;
     }
@@ -18,22 +26,56 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create, update, delete: if true;
     }
+
+    // Los tags NO los escribe la app (solo el panel); sí los lee sin sesión.
     match /tags/{id} {
-      allow read, write: if true;
-    }
-    match /testVocacional/{docId=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // --- Datos personales: solo el dueño (+ admin web) ---
+    // El test vocacional se alcanza solo con sesión (desde Perfil), así que
+    // escribir exige estar logueado; leer es público para la pantalla de inicio.
+    match /testVocacional/{docId=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // --- Datos personales: el dueño (+ admin web) ---
+    //
+    // El dueño ya no puede escribir cualquier campo de su documento: `rol` y
+    // `uid` quedan fuera de las listas, si no cualquiera se promovía a admin
+    // con un update sobre su propio `usuarios/{uid}`.
     match /usuarios/{uid} {
-      allow read, write: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow read: if isAdmin() || esDuenio(uid);
+
+      // Alta desde la app (email/contraseña o Google) o desde el panel.
+      allow create: if isAdmin() || (esDuenio(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.rol == 'usuario'
+        && request.resource.data.keys().hasOnly([
+          'uid', 'nombre', 'apellido', 'nombreCompleto', 'email', 'rol',
+          'contrasenaHash', 'ultimoLogin', 'fechaNacimiento', 'localidad',
+          'fotoURL', 'createdAt', 'updatedAt'
+        ]));
+
+      // Edición del perfil y de las preferencias. La lista es lo que la app
+      // realmente escribe (perfil, config, favoritos, modo oscuro, preferencias
+      // de búsqueda); cualquier campo nuevo hay que agregarlo acá.
+      allow update: if isAdmin() || (esDuenio(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'nombre', 'apellido', 'nombreCompleto', 'localidad',
+          'radioBusqueda', 'modalidad', 'tipoInstitucion', 'fotoURL',
+          'modoOscuro', 'notificaciones', 'ubicacionAutomatica',
+          'avisosLeidos', 'ultimoLogin', 'fechaNacimiento'
+        ]));
+
+      allow delete: if isAdmin();
     }
     match /usuarios/{uid}/favoritos/{id} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if esDuenio(uid);
     }
     match /usuarios/{uid}/historial/{id} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if esDuenio(uid);
     }
     match /notificaciones/{id} {
       // El admin crea avisos para otros usuarios (ej. la respuesta a un
@@ -63,7 +105,12 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     match /mensajes/{id} {
-      allow read, write: if request.auth != null;
+      // Colección sin pantallas que la usen (la app solo la lee filtrando por
+      // `userUid`): cada uno lee los suyos y solo el panel escribe. Antes
+      // cualquier usuario logueado podía leer los mensajes de todos.
+      allow read: if isAdmin() || (request.auth != null
+        && resource.data.userUid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
     }
   }
 }
