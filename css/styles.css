@@ -134,9 +134,9 @@ button { font-family: inherit; }
 }
 
 .sidebar__brand-logo {
-    width: 52px;
-    height: 52px;
-    border-radius: 10px;
+    width: 58px;
+    height: 58px;
+    border-radius: 12px;
     object-fit: cover;
     flex-shrink: 0;
   }
