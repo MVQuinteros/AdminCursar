@@ -51,9 +51,15 @@ service cloud.firestore {
           || request.resource.data.userUid == request.auth.uid);
       // El dueño lee su propio reporte (para ver la respuesta del admin);
       // el admin lee, actualiza y borra todo.
+      //
+      // El uid del autor viene en `userUid` en los tickets cargados desde el
+      // panel, pero la app móvil lo escribe en `uid`; se aceptan los dos, si no
+      // el autor no puede leer su propio reporte ni la respuesta.
       allow read: if isAdmin() || (request.auth != null
-        && 'userUid' in resource.data
-        && resource.data.userUid == request.auth.uid);
+        && (('userUid' in resource.data
+              && resource.data.userUid == request.auth.uid)
+            || ('uid' in resource.data
+              && resource.data.uid == request.auth.uid)));
       allow update, delete: if isAdmin();
     }
     match /mensajes/{id} {
