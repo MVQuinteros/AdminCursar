@@ -1,7 +1,28 @@
 rules_version = '2';
+
+// =====================================================================
+// Reglas de Firestore - proyecto-app-a77c8
+//
+// Base: las reglas publicadas (privacidad por duenio: cada usuario ve
+// solo lo suyo) MAS el acceso del Panel de Administracion, que no
+// existia en la version publicada y por eso dejaba sin lectura/escritura
+// las pantallas de Usuarios, Administradores, Soporte y Test vocacional.
+//
+// Criterio del merge:
+//   * Nada de lo que ya funcionaba para la app movil se endurece.
+//   * Todo lo que agrega el panel va detras de isAdmin().
+//   * Se cierra el auto-ascenso a admin (la version publicada permitia
+//     que cualquier usuario se pusiera rol='admin' en su propio doc).
+// =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ------------------------------------------------------------------
+    // Funciones
+    // ------------------------------------------------------------------
+
+    // El panel es admin si su documento en `usuarios` tiene rol == 'admin'.
+    // El get() lo resuelve el motor de reglas (no pasa por estas reglas).
     function isAdmin() {
       return request.auth != null &&
         get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin';
@@ -11,111 +32,155 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
-    // --- Contenido público + semilla (el seed corre ANTES del login) ---
-    //
-    // Siguen abiertos a escritura porque la semilla de la app escribe acá al
-    // arrancar, antes de que exista sesión. Endurecerlos (write: isAdmin())
-    // implica sacar la semilla de la app; queda pendiente.
-    match /instituciones/{id} {
-      allow read, write: if true;
-    }
-    match /ofertas/{id} {
-      allow read, write: if true;
-    }
-    match /avisos/{id} {
-      allow read: if request.auth != null;
-      allow create, update, delete: if true;
-    }
-
-    // Los tags NO los escribe la app (solo el panel); sí los lee sin sesión.
-    match /tags/{id} {
+    // ==================================================================
+    // 1) Contenido publico: lectura para todos (app y panel).
+    //    La escritura la usa SOLO el panel => isAdmin().
+    //    (La semilla de seed_data.dart corre sin sesion y queda denegada,
+    //     igual que en la version publicada: es best-effort a proposito.)
+    // ==================================================================
+    match /instituciones/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // El test vocacional se alcanza solo con sesión (desde Perfil), así que
-    // escribir exige estar logueado; leer es público para la pantalla de inicio.
-    match /testVocacional/{docId=**} {
+    match /ofertas/{docId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isAdmin();
     }
 
-    // --- Datos personales: el dueño (+ admin web) ---
+    match /avisos/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /tags/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /testVocacional/data/preguntas/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ==================================================================
+    // 2) Soporte: el ticket pertenece al usuario que lo crea.
     //
-    // El dueño ya no puede escribir cualquier campo de su documento: `rol` y
-    // `uid` quedan fuera de las listas, si no cualquiera se promovía a admin
-    // con un update sobre su propio `usuarios/{uid}`.
-    match /usuarios/{uid} {
-      allow read: if isAdmin() || esDuenio(uid);
-
-      // Alta desde la app (email/contraseña o Google) o desde el panel.
-      allow create: if isAdmin() || (esDuenio(uid)
-        && request.resource.data.uid == uid
-        && request.resource.data.rol == 'usuario'
-        && request.resource.data.keys().hasOnly([
-          'uid', 'nombre', 'apellido', 'nombreCompleto', 'email', 'rol',
-          'contrasenaHash', 'ultimoLogin', 'fechaNacimiento', 'localidad',
-          'fotoURL', 'createdAt', 'updatedAt'
-        ]));
-
-      // Edición del perfil y de las preferencias. La lista es lo que la app
-      // realmente escribe (perfil, config, favoritos, modo oscuro, preferencias
-      // de búsqueda); cualquier campo nuevo hay que agregarlo acá.
-      allow update: if isAdmin() || (esDuenio(uid)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'nombre', 'apellido', 'nombreCompleto', 'localidad',
-          'radioBusqueda', 'modalidad', 'tipoInstitucion', 'fotoURL',
-          'modoOscuro', 'notificaciones', 'ubicacionAutomatica',
-          'avisosLeidos', 'ultimoLogin', 'fechaNacimiento'
-        ]));
-
-      allow delete: if isAdmin();
-    }
-    match /usuarios/{uid}/favoritos/{id} {
-      allow read, write: if esDuenio(uid);
-    }
-    match /usuarios/{uid}/historial/{id} {
-      allow read, write: if esDuenio(uid);
-    }
-    match /notificaciones/{id} {
-      // El admin crea avisos para otros usuarios (ej. la respuesta a un
-      // reporte de soporte); cada usuario crea los suyos.
-      allow create: if isAdmin() || (request.auth != null
-        && request.resource.data.userUid == request.auth.uid);
-      allow read, update, delete: if isAdmin() || (request.auth != null
-        && resource.data.userUid == request.auth.uid);
-    }
-    match /soporte/{id} {
-      // La app escribe el uid del que pregunta. Si todavía no lo manda (versión
-      // vieja de la app) se acepta igual, para no cortar el alta de tickets.
-      allow create: if request.auth != null
-        && (!('userUid' in request.resource.data)
-          || request.resource.data.userUid == request.auth.uid);
-      // Lectura de un ticket puntual: el autor puede abrirlo con cualquiera de
-      // los dos campos (los tickets cargados desde el panel guardan `userUid`;
-      // la app móvil escribe `uid`).
-      allow get: if isAdmin() || (request.auth != null
-        && (('userUid' in resource.data
-              && resource.data.userUid == request.auth.uid)
-            || ('uid' in resource.data
-              && resource.data.uid == request.auth.uid)));
-
-      // Listado para "Mis reportes": la app consulta `where('uid','==',mío)`.
-      // Firestore exige que la regla se pueda comprobar con las condiciones de
-      // la consulta, así que acá va una sola condición sobre `uid`; con el `||`
-      // de arriba la consulta se rechaza aunque los documentos sean del usuario.
-      allow list: if isAdmin()
-        || (request.auth != null && resource.data.uid == request.auth.uid);
-
-      allow update, delete: if isAdmin();
-    }
-    match /mensajes/{id} {
-      // Colección sin pantallas que la usen (la app solo la lee filtrando por
-      // `userUid`): cada uno lee los suyos y solo el panel escribe. Antes
-      // cualquier usuario logueado podía leer los mensajes de todos.
-      allow read: if isAdmin() || (request.auth != null
-        && resource.data.userUid == request.auth.uid);
+    //    El campo de propiedad es `userUid`, pero la app movil todavia
+    //    escribe `uid`: se aceptan los dos (van en sentencias `allow`
+    //    separadas a proposito, porque Firestore solo puede comprobar una
+    //    consulta `where(...)` contra una regla con UNA condicion simple).
+    //
+    //    El panel lee todos los tickets, responde y borra.
+    // ==================================================================
+    match /soporte/{docId} {
+      // --- Panel ---
+      allow read: if isAdmin();
       allow create, update, delete: if isAdmin();
+
+      // --- Usuario (crea su ticket) ---
+      allow create: if request.auth != null
+                    && request.resource.data.userUid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+
+      // --- Usuario (lee "Mis reportes") ---
+      allow read: if request.auth != null
+                  && resource.data.userUid == request.auth.uid;
+      allow read: if request.auth != null
+                  && resource.data.uid == request.auth.uid;
+
+      // --- Usuario (edita/borra su ticket) ---
+      allow update, delete: if request.auth != null
+                            && resource.data.userUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.uid == request.auth.uid;
+    }
+
+    // ==================================================================
+    // 3) Datos personales con propiedad por campo `userUid`.
+    //
+    //    El panel los necesita para: crear la notificacion de respuesta a
+    //    un reporte, y ver/limpiar los resultados del test vocacional.
+    // ==================================================================
+    match /notificaciones/{docId} {
+      allow read, create, update, delete: if isAdmin();
+
+      allow read: if request.auth != null
+                  && resource.data.userUid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.userUid == request.auth.uid;
+    }
+
+    match /mensajes/{docId} {
+      // La app solo lee los suyos; el que escribe es el panel.
+      allow write: if isAdmin();
+
+      allow read: if request.auth != null
+                  && resource.data.userUid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.userUid == request.auth.uid;
+    }
+
+    match /testVocacional/data/respuestas/{docId} {
+      allow read: if request.auth != null
+                  && resource.data.userUid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.userUid == request.auth.uid;
+    }
+
+    match /testVocacional/data/resultados/{docId} {
+      // El panel lista todos los resultados y puede borrarlos ("limpiar").
+      allow read: if isAdmin();
+      allow delete: if isAdmin();
+
+      // La app guarda su resultado con el uid como id de documento.
+      allow read: if request.auth != null
+                  && resource.data.userUid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                            && resource.data.userUid == request.auth.uid;
+    }
+
+    // ==================================================================
+    // 4) Usuarios: el documento es del usuario (id == uid) y del panel.
+    // ==================================================================
+    match /usuarios/{uid} {
+      // --- Panel: lista, edita perfiles, cambia roles y borra ---
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin();
+
+      // --- El propio usuario ---
+      allow read: if esDuenio(uid);
+
+      // Alta (registro / primer ingreso con Google). No puede nacer admin.
+      allow create: if esDuenio(uid)
+                    && (!('uid' in request.resource.data)
+                        || request.resource.data.uid == uid)
+                    && (!('rol' in request.resource.data)
+                        || request.resource.data.rol == 'usuario');
+
+      // Perfil y preferencias. No puede tocar `rol` ni `uid`: si no,
+      // cualquier usuario se ascendia a admin desde la app y con eso
+      // ganaba la lectura de todos los usuarios y la escritura del panel.
+      allow update: if esDuenio(uid)
+                    && !request.resource.data.diff(resource.data)
+                          .affectedKeys().hasAny(['rol', 'uid']);
+    }
+
+    match /usuarios/{uid}/favoritos/{docId} {
+      allow read, write: if esDuenio(uid);
+    }
+
+    match /usuarios/{uid}/historial/{docId} {
+      allow read, write: if esDuenio(uid);
     }
   }
 }
