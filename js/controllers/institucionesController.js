@@ -4,14 +4,17 @@
 import { createCrudController } from './crudController.js';
 import { InstitucionModel } from '../models/InstitucionModel.js';
 import { badge } from '../views/crudView.js';
+import { toast } from '../views/notify.js';
 import { esc, fmtDate } from '../utils/helpers.js';
 
 const ESTADO_BADGE = { aprobada: 'success', rechazada: 'danger' };
 
 export const institucionesController = {
   async render(body) {
+    const model = new InstitucionModel();
+
     const crud = createCrudController({
-      model: new InstitucionModel(),
+      model,
       title: 'Instituciones',
       subtitle: 'Centros educativos registrados',
       autoTimestamp: true,
@@ -67,9 +70,27 @@ export const institucionesController = {
         },
       ],
       rowActions: [
+        {
+          action: 'aprobar',
+          label: 'Aceptar',
+          icon: 'check',
+          tone: 'success',
+          title: 'Aprobar institución',
+          visible: (r) => r.estado !== 'aprobada',
+        },
         { action: 'edit', label: 'Editar', icon: 'edit', tone: 'secondary', title: 'Editar institución' },
         { action: 'delete', label: 'Eliminar', icon: 'trash', tone: 'danger', title: 'Eliminar institución' },
       ],
+      onRowAction: async (action, row, { reload }) => {
+        if (action !== 'aprobar') return;
+        try {
+          await model.update(row.id, { estado: 'aprobada' });
+          toast('Institución aprobada.', 'success');
+          await reload();
+        } catch (err) {
+          toast(`No se pudo aprobar: ${err.message}`, 'error');
+        }
+      },
     });
 
     await crud.render(body);
