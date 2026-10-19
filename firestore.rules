@@ -36,8 +36,10 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
     match /notificaciones/{id} {
-      allow create: if request.auth != null
-        && request.resource.data.userUid == request.auth.uid;
+      // El admin crea avisos para otros usuarios (ej. la respuesta a un
+      // reporte de soporte); cada usuario crea los suyos.
+      allow create: if isAdmin() || (request.auth != null
+        && request.resource.data.userUid == request.auth.uid);
       allow read, update, delete: if isAdmin() || (request.auth != null
         && resource.data.userUid == request.auth.uid);
     }
