@@ -91,17 +91,22 @@ service cloud.firestore {
       allow create: if request.auth != null
         && (!('userUid' in request.resource.data)
           || request.resource.data.userUid == request.auth.uid);
-      // El dueño lee su propio reporte (para ver la respuesta del admin);
-      // el admin lee, actualiza y borra todo.
-      //
-      // El uid del autor viene en `userUid` en los tickets cargados desde el
-      // panel, pero la app móvil lo escribe en `uid`; se aceptan los dos, si no
-      // el autor no puede leer su propio reporte ni la respuesta.
-      allow read: if isAdmin() || (request.auth != null
+      // Lectura de un ticket puntual: el autor puede abrirlo con cualquiera de
+      // los dos campos (los tickets cargados desde el panel guardan `userUid`;
+      // la app móvil escribe `uid`).
+      allow get: if isAdmin() || (request.auth != null
         && (('userUid' in resource.data
               && resource.data.userUid == request.auth.uid)
             || ('uid' in resource.data
               && resource.data.uid == request.auth.uid)));
+
+      // Listado para "Mis reportes": la app consulta `where('uid','==',mío)`.
+      // Firestore exige que la regla se pueda comprobar con las condiciones de
+      // la consulta, así que acá va una sola condición sobre `uid`; con el `||`
+      // de arriba la consulta se rechaza aunque los documentos sean del usuario.
+      allow list: if isAdmin()
+        || (request.auth != null && resource.data.uid == request.auth.uid);
+
       allow update, delete: if isAdmin();
     }
     match /mensajes/{id} {
